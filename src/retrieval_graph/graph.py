@@ -8,7 +8,7 @@ The graph now performs three steps:
 
 from langchain_core.documents import Document
 from langchain_core.runnables import RunnableConfig
-from langchain.retrievers.document_compressors import CohereRerank
+from langchain_classic.retrievers.document_compressors import CohereRerank
 from langgraph.graph import StateGraph
 from pydantic import BaseModel
 
