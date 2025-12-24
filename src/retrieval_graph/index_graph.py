@@ -46,7 +46,7 @@ async def index_docs(
     """
     if not config:
         raise ValueError("Configuration required to run index_docs.")
-    with retrieval.make_retriever(config) as retriever:
+    async with retrieval.make_retriever(config) as retriever:
         stamped_docs = ensure_docs_have_user_id(state.docs, config)
 
         await retriever.aadd_documents(stamped_docs)

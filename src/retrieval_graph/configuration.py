@@ -1,4 +1,4 @@
-"""Define the configurable parameters for the agent."""
+"""Define the configurable parameters for the semantic search pipeline."""
 
 from __future__ import annotations
 
@@ -6,8 +6,6 @@ from dataclasses import dataclass, field, fields
 from typing import Annotated, Any, Literal, Type, TypeVar
 
 from langchain_core.runnables import RunnableConfig, ensure_config
-
-from retrieval_graph import prompts
 
 
 @dataclass(kw_only=True)
@@ -32,12 +30,12 @@ class IndexConfiguration:
     )
 
     retriever_provider: Annotated[
-        Literal["elastic", "elastic-local", "pinecone", "mongodb"],
+        Literal["mongodb"],
         {"__template_metadata__": {"kind": "retriever"}},
     ] = field(
-        default="elastic",
+        default="mongodb",
         metadata={
-            "description": "The vector store provider to use for retrieval. Options are 'elastic', 'pinecone', or 'mongodb'."
+            "description": "The vector store provider to use for retrieval. This template now uses MongoDB exclusively."
         },
     )
 
@@ -45,6 +43,13 @@ class IndexConfiguration:
         default_factory=dict,
         metadata={
             "description": "Additional keyword arguments to pass to the search function of the retriever."
+        },
+    )
+
+    mongodb_namespace: str = field(
+        default="langgraph_retrieval_agent.default",
+        metadata={
+            "description": "MongoDB Atlas namespace to use (database.collection)."
         },
     )
 
@@ -72,30 +77,14 @@ T = TypeVar("T", bound=IndexConfiguration)
 
 @dataclass(kw_only=True)
 class Configuration(IndexConfiguration):
-    """The configuration for the agent."""
+    """The configuration for the semantic search agent."""
 
-    response_system_prompt: str = field(
-        default=prompts.RESPONSE_SYSTEM_PROMPT,
-        metadata={"description": "The system prompt used for generating responses."},
-    )
-
-    response_model: Annotated[str, {"__template_metadata__": {"kind": "llm"}}] = field(
-        default="anthropic/claude-3-5-sonnet-20240620",
+    reranker_model: Annotated[
+        str,
+        {"__template_metadata__": {"kind": "reranker"}},
+    ] = field(
+        default="cohere/rerank-english-v3.0",
         metadata={
-            "description": "The language model used for generating responses. Should be in the form: provider/model-name."
-        },
-    )
-
-    query_system_prompt: str = field(
-        default=prompts.QUERY_SYSTEM_PROMPT,
-        metadata={
-            "description": "The system prompt used for processing and refining queries."
-        },
-    )
-
-    query_model: Annotated[str, {"__template_metadata__": {"kind": "llm"}}] = field(
-        default="anthropic/claude-3-haiku-20240307",
-        metadata={
-            "description": "The language model used for processing and refining queries. Should be in the form: provider/model-name."
+            "description": "Cross-encoder used to rerank retrieved documents. Format: provider/model-name."
         },
     )

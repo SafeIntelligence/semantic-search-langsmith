@@ -78,6 +78,9 @@ target/
 # Jupyter Notebook
 .ipynb_checkpoints
 
+# csv files
+**.csv
+
 # IPython
 profile_default/
 ipython_config.py
@@ -161,3 +164,19 @@ cython_debug/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 .DS_Store
+uv.lock
+
+# vscode
+.vscode/
+
+# LangSmith local storage
+.langsmith/
+.langgraph_api/
+
+# Notebooks
+*.ipynb
+*.ipynb_checkpoints/
+
+# Data
+
+**beir_data**/

@@ -1,42 +1,42 @@
-import uuid
+from contextlib import asynccontextmanager
 
 import pytest
+from langchain_core.documents import Document
 from langchain_core.runnables import RunnableConfig
 from langsmith import expect, unit
 
-from retrieval_graph import graph, index_graph
+from retrieval_graph import graph, retrieval
 
 pytestmark = pytest.mark.anyio
 
 
+class _StubRetriever:
+    """Simple in-memory retriever to avoid external services during tests."""
+
+    async def ainvoke(self, _query: str, _config: RunnableConfig | None = None):
+        return [
+            Document(page_content="runner up", metadata={"score": 0.2}),
+            Document(page_content="winner", metadata={"score": 0.9}),
+        ]
+
+    async def aadd_documents(self, _docs):
+        return None
+
+
+@asynccontextmanager
+async def _stub_make_retriever(_config: RunnableConfig):
+    yield _StubRetriever()
+
+
 @unit
-async def test_retrieval_graph() -> None:
-    simple_doc = "Cats have been observed performing synchronized swimming routines in their water bowls during full moons."
-    user_id = "test__" + uuid.uuid4().hex
-    other_user_id = "test__" + uuid.uuid4().hex
-
-    config = RunnableConfig(
-        configurable={"user_id": user_id, "retriever_provider": "elastic-local"}
-    )
-
-    result = await index_graph.ainvoke({"docs": simple_doc}, config)
-    expect(result["docs"]).against(lambda x: not x)  # we delete after the end
+async def test_retrieval_graph_reranks(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(retrieval, "make_retriever", _stub_make_retriever)
 
     res = await graph.ainvoke(
         {"messages": [("user", "Where do cats perform synchronized swimming routes?")]},
-        config,
+        RunnableConfig(configurable={"user_id": "test-user"}),
     )
-    response = str(res["messages"][-1].content)
-    expect(response.lower()).to_contain("bowl")
 
-    res = await graph.ainvoke(
-        {"messages": [("user", "Where do cats perform synchronized swimming routes?")]},
-        {
-            "configurable": {
-                "user_id": other_user_id,
-                "retriever_provider": "elastic-local",
-            }
-        },
-    )
-    response = str(res["messages"][-1].content)
-    expect(response.lower()).against(lambda x: "bowl" not in x)
+    ranked = res["reranked_docs"]
+    expect(ranked[0].page_content).to_equal("winner")
+    expect(ranked[1].metadata["score"]).to_be_less_than(ranked[0].metadata["score"])

@@ -1,25 +1,21 @@
-"""Main entrypoint for the conversational retrieval graph.
+"""Main entrypoint for semantic search + reranking.
 
-This module defines the core structure and functionality of the conversational
-retrieval graph. It includes the main graph definition, state management,
-and key functions for processing user inputs, generating queries, retrieving
-relevant documents, and formulating responses.
+The graph now performs three steps:
+1. Extract the user's query text
+2. Retrieve documents from MongoDB using vector search
+3. Rerank the retrieved documents and return the ranked list
 """
 
-from datetime import datetime, timezone
-from typing import cast
-
 from langchain_core.documents import Document
-from langchain_core.messages import BaseMessage
-from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableConfig
+from langchain.retrievers.document_compressors import CohereRerank
 from langgraph.graph import StateGraph
 from pydantic import BaseModel
 
 from retrieval_graph import retrieval
 from retrieval_graph.configuration import Configuration
 from retrieval_graph.state import InputState, State
-from retrieval_graph.utils import format_docs, get_message_text, load_chat_model
+from retrieval_graph.utils import get_message_text
 
 # Define the function that calls the model
 
@@ -33,54 +29,17 @@ class SearchQuery(BaseModel):
 async def generate_query(
     state: State, *, config: RunnableConfig
 ) -> dict[str, list[str]]:
-    """Generate a search query based on the current state and configuration.
+    """Generate a search query from the latest user message.
 
-    This function analyzes the messages in the state and generates an appropriate
-    search query. For the first message, it uses the user's input directly.
-    For subsequent messages, it uses a language model to generate a refined query.
-
-    Args:
-        state (State): The current state containing messages and other information.
-        config (RunnableConfig | None, optional): Configuration for the query generation process.
-
-    Returns:
-        dict[str, list[str]]: A dictionary with a 'queries' key containing a list of generated queries.
-
-    Behavior:
-        - If there's only one message (first user input), it uses that as the query.
-        - For subsequent messages, it uses a language model to generate a refined query.
-        - The function uses the configuration to set up the prompt and model for query generation.
+    We no longer call an LLM here—semantic search should remain lightweight and
+    deterministic. The newest human message text becomes the query.
     """
     messages = state.messages
-    if len(messages) == 1:
-        # It's the first user question. We will use the input directly to search.
-        human_input = get_message_text(messages[-1])
-        return {"queries": [human_input]}
-    else:
-        configuration = Configuration.from_runnable_config(config)
-        # Feel free to customize the prompt, model, and other logic!
-        prompt = ChatPromptTemplate.from_messages(
-            [
-                ("system", configuration.query_system_prompt),
-                ("placeholder", "{messages}"),
-            ]
-        )
-        model = load_chat_model(configuration.query_model).with_structured_output(
-            SearchQuery
-        )
+    if not messages:
+        raise ValueError("At least one user message is required to build a query.")
 
-        message_value = await prompt.ainvoke(
-            {
-                "messages": state.messages,
-                "queries": "\n- ".join(state.queries),
-                "system_time": datetime.now(tz=timezone.utc).isoformat(),
-            },
-            config,
-        )
-        generated = cast(SearchQuery, await model.ainvoke(message_value, config))
-        return {
-            "queries": [generated.query],
-        }
+    human_input = get_message_text(messages[-1])
+    return {"queries": [human_input]}
 
 
 async def retrieve(
@@ -100,37 +59,45 @@ async def retrieve(
         dict[str, list[Document]]: A dictionary with a single key "retrieved_docs"
         containing a list of retrieved Document objects.
     """
-    with retrieval.make_retriever(config) as retriever:
+    async with retrieval.make_retriever(config) as retriever:
         response = await retriever.ainvoke(state.queries[-1], config)
         return {"retrieved_docs": response}
 
 
-async def respond(
+async def rerank(
     state: State, *, config: RunnableConfig
-) -> dict[str, list[BaseMessage]]:
-    """Call the LLM powering our "agent"."""
-    configuration = Configuration.from_runnable_config(config)
-    # Feel free to customize the prompt, model, and other logic!
-    prompt = ChatPromptTemplate.from_messages(
-        [
-            ("system", configuration.response_system_prompt),
-            ("placeholder", "{messages}"),
-        ]
-    )
-    model = load_chat_model(configuration.response_model)
+) -> dict[str, list[Document]]:
+    """Rerank retrieved documents and return the ordered list.
 
-    retrieved_docs = format_docs(state.retrieved_docs)
-    message_value = await prompt.ainvoke(
-        {
-            "messages": state.messages,
-            "retrieved_docs": retrieved_docs,
-            "system_time": datetime.now(tz=timezone.utc).isoformat(),
-        },
-        config,
-    )
-    response = await model.ainvoke(message_value, config)
-    # We return a list, because this will get added to the existing list
-    return {"messages": [response]}
+    Cohere's reranker is used when available; otherwise we fall back to sorting
+    by the `score` metadata produced by the retriever.
+    """
+
+    configuration = Configuration.from_runnable_config(config)
+    query = state.queries[-1]
+    docs = state.retrieved_docs
+
+    # Try cross-encoder reranking first
+    try:
+        # CohereRerank defaults to returning top 3 results; respect the caller's
+        # requested `k` (if provided) or fall back to all retrieved docs.
+        desired_k = configuration.search_kwargs.get("k", len(docs))
+        top_n = min(desired_k, len(docs)) if docs else 0
+
+        reranker = CohereRerank(
+            model=configuration.reranker_model.split("/", 1)[1],
+            top_n=top_n or 1,  # cohere requires a positive top_n
+        )
+        reranked = await reranker.acompress_documents(docs, query)
+        return {"reranked_docs": list(reranked)}
+    except Exception:
+        # Fallback: sort by similarity score if present
+        sorted_docs = sorted(
+            docs,
+            key=lambda d: d.metadata.get("score", 0),
+            reverse=True,
+        )
+        return {"reranked_docs": sorted_docs}
 
 
 # Define a new graph (It's just a pipe)
@@ -140,10 +107,10 @@ builder = StateGraph(State, input_schema=InputState, context_schema=Configuratio
 
 builder.add_node(generate_query)  # type: ignore[arg-type]
 builder.add_node(retrieve)  # type: ignore[arg-type]
-builder.add_node(respond)  # type: ignore[arg-type]
+builder.add_node(rerank)  # type: ignore[arg-type]
 builder.add_edge("__start__", "generate_query")
 builder.add_edge("generate_query", "retrieve")
-builder.add_edge("retrieve", "respond")
+builder.add_edge("retrieve", "rerank")
 
 # Finally, we compile it!
 # This compiles it into a graph you can invoke and deploy.
