@@ -22,6 +22,7 @@ dependencies = [
     "langchain-cohere>=0.2.4",
     "langchain-google-genai>=0.1.5",
     "beir>=2.2.0",
+    "langchain-classic>=1.0.0",
 ]
 
 [project.optional-dependencies]
