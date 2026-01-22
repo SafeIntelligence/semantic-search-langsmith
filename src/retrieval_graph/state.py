@@ -162,3 +162,19 @@ class State(InputState):
 
     # Feel free to add additional attributes to your state as needed.
     # Common examples include retrieved documents, extracted entities, API connections, etc.
+
+
+#############################  Output State  ##################################
+
+
+@dataclass(kw_only=True)
+class OutputState:
+    """Represents the output state for the retrieval graph.
+
+    This class defines the structure of the output state, exposing only the
+    final reranked documents to callers while maintaining internal state
+    separation. This reduces payload size by excluding intermediate retrieval results.
+    """
+
+    reranked_docs: list[Document]
+    """Final ranked list of documents returned to the caller."""

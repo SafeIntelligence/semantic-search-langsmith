@@ -14,7 +14,7 @@ from pydantic import BaseModel
 
 from retrieval_graph import retrieval
 from retrieval_graph.configuration import Configuration
-from retrieval_graph.state import InputState, State
+from retrieval_graph.state import InputState, OutputState, State
 from retrieval_graph.utils import get_message_text
 
 # Define the function that calls the model
@@ -109,7 +109,7 @@ async def rerank(
 # Define a new graph (It's just a pipe)
 
 
-builder = StateGraph(State, input_schema=InputState, context_schema=Configuration)
+builder = StateGraph(State, input_schema=InputState, output_schema=OutputState, context_schema=Configuration)
 
 builder.add_node(generate_query)  # type: ignore[arg-type]
 builder.add_node(retrieve)  # type: ignore[arg-type]
