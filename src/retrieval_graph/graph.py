@@ -80,8 +80,9 @@ async def rerank(
     # Try cross-encoder reranking first
     try:
         # CohereRerank defaults to returning top 3 results; respect the caller's
-        # requested `k` (if provided) or fall back to all retrieved docs.
-        desired_k = configuration.search_kwargs.get("k", len(docs))
+        # requested `num_returned_docs` (if provided) or fall back to all retrieved docs. 
+        
+        desired_k = configuration.search_kwargs.get("num_returned_docs", len(docs))
         top_n = min(desired_k, len(docs)) if docs else 0
 
         reranker = CohereRerank(
@@ -97,6 +98,11 @@ async def rerank(
             key=lambda d: d.metadata.get("score", 0),
             reverse=True,
         )
+        
+        # shorten the text in the documents to first 200 characters
+        for doc in sorted_docs:
+            doc.page_content = doc.page_content[:200] + "..." if len(doc.page_content) > 200 else doc.page_content
+        
         return {"reranked_docs": sorted_docs}
 
 
