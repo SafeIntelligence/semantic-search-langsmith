@@ -76,6 +76,8 @@ async def rerank(
     configuration = Configuration.from_runnable_config(config)
     query = state.queries[-1]
     docs = state.retrieved_docs
+    
+    max_chars_in_return = configuration.search_kwargs.get("max_chars_in_return", None)
 
     # Try cross-encoder reranking first
     try:
@@ -90,7 +92,16 @@ async def rerank(
             top_n=top_n or 1,  # cohere requires a positive top_n
         )
         reranked = await reranker.acompress_documents(docs, query)
-        return {"reranked_docs": list(reranked)}
+        
+        final_docs = []
+        # shorten the text in the documents to first 200 characters
+        for doc in reranked:
+            doc.page_content = doc.page_content[:max_chars_in_return] + "..." if max_chars_in_return and len(doc.page_content) > max_chars_in_return else doc.page_content
+            final_docs.append(doc)
+        
+        
+        return {"reranked_docs": final_docs}
+    
     except Exception:
         # Fallback: sort by similarity score if present
         sorted_docs = sorted(
@@ -100,9 +111,10 @@ async def rerank(
         )
         
         # shorten the text in the documents to first 200 characters
-        for doc in sorted_docs:
-            doc.page_content = doc.page_content[:200] + "..." if len(doc.page_content) > 200 else doc.page_content
-        
+        if max_chars_in_return:
+            for doc in sorted_docs:
+                doc.page_content = doc.page_content[:max_chars_in_return] + "..." if max_chars_in_return and len(doc.page_content) > max_chars_in_return else doc.page_content
+            
         return {"reranked_docs": sorted_docs}
 
 
